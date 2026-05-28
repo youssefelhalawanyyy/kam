@@ -1,0 +1,130 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check admin by email token (works even before Firestore profile is created)
+    // OR by Firestore document role
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'admin@bkam.eg' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isStoreOwner() {
+      return isAuthenticated() && (
+        isAdmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'store')
+      );
+    }
+
+    // Products — public read; allow any create (needed for seeding); store/admin can update
+    match /products/{productId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if isStoreOwner();
+      allow delete: if isAdmin();
+    }
+
+    // Stores — public read; store owners and admin can manage
+    match /stores/{storeId} {
+      allow read: if true;
+      allow create: if isStoreOwner();
+      allow update: if isAdmin() || (
+        isStoreOwner() &&
+        exists(/databases/$(database)/documents/stores/$(storeId)) &&
+        get(/databases/$(database)/documents/stores/$(storeId)).data.ownerId == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Prices — public read; store/admin can create and update
+    match /prices/{priceId} {
+      allow read: if true;
+      allow create: if isStoreOwner();
+      allow update: if isStoreOwner();
+      allow delete: if isAdmin();
+    }
+
+    // Price History — public read; store/admin can create
+    match /priceHistory/{histId} {
+      allow read: if true;
+      allow create: if isStoreOwner();
+      allow delete: if isAdmin();
+    }
+
+    // Users — user reads/writes own; admin reads all
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // Subscribers — anyone can subscribe; only admin can read/delete
+    match /subscribers/{subId} {
+      allow create: if true;
+      allow read: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Price Alerts — users manage their own
+    match /priceAlerts/{alertId} {
+      allow read, create, update: if isAuthenticated() &&
+        (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() &&
+        (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Page Views — anyone can create (anonymous tracking); only admin can read
+    match /pageViews/{viewId} {
+      allow create: if true;
+      allow read: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Active Sessions — anyone can read/write (live presence tracking)
+    match /activeSessions/{sessionId} {
+      allow read, write: if true;
+    }
+
+    // Wishlists — users manage their own
+    match /wishlists/{itemId} {
+      allow read, create, delete: if isAuthenticated() &&
+        (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Baskets — users manage their own
+    match /baskets/{itemId} {
+      allow read, create, update, delete: if isAuthenticated() &&
+        (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Reviews — public read; authenticated users can create their own
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() &&
+        (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Store Claims — users create their own; admin manages
+    match /storeClaims/{claimId} {
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow read, update: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+
+    // Affiliate Clicks — public create (API route); admin reads
+    match /affiliateClicks/{clickId} {
+      allow create: if true;
+      allow read: if isAdmin();
+    }
+  }
+}
+
